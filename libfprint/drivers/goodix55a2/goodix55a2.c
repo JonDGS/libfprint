@@ -123,6 +123,7 @@ struct _FpiDeviceGoodix55a2
   gboolean      waiting_up;    /* the pending wait is for the up event */
   gboolean      deactivating;
   gboolean      scanning;
+  GSource      *scan_source;   /* pending start_scan, destroyed on deactivate */
   GCancellable *cancel;
 };
 
@@ -969,6 +970,7 @@ start_scan (FpDevice *dev, gpointer user_data)
   FpiDeviceGoodix55a2 *self = FPI_DEVICE_GOODIX55A2 (dev);
   GError *error = NULL;
 
+  self->scan_source = NULL;
   if (self->deactivating || self->scanning)
     return;
   self->scanning = TRUE;
@@ -1026,8 +1028,10 @@ dev_activate (FpImageDevice *img_dev)
 static void
 dev_change_state (FpImageDevice *img_dev, FpiImageDeviceState state)
 {
-  if (state == FPI_IMAGE_DEVICE_STATE_AWAIT_FINGER_ON)
-    fpi_device_add_timeout (FP_DEVICE (img_dev), 0, start_scan, NULL, NULL);
+  FpiDeviceGoodix55a2 *self = FPI_DEVICE_GOODIX55A2 (img_dev);
+
+  if (state == FPI_IMAGE_DEVICE_STATE_AWAIT_FINGER_ON && !self->scan_source)
+    self->scan_source = fpi_device_add_timeout (FP_DEVICE (img_dev), 0, start_scan, NULL, NULL);
 }
 
 static void
@@ -1036,6 +1040,8 @@ dev_deactivate (FpImageDevice *img_dev)
   FpiDeviceGoodix55a2 *self = FPI_DEVICE_GOODIX55A2 (img_dev);
 
   self->deactivating = TRUE;
+  if (self->scan_source)
+    g_clear_pointer (&self->scan_source, g_source_destroy);
   if (self->wait_pending)
     {
       g_cancellable_cancel (self->cancel);   /* wait_cb finishes deactivation */
