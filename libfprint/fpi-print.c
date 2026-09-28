@@ -217,8 +217,14 @@ fpi_print_add_from_image (FpPrint *print,
     }
   else if (print->type == FPI_PRINT_SIGFM)
     {
-      SigfmImgInfo * info = image->sigfm_info;
-      g_ptr_array_add (print->prints, info);
+      if (!image->sigfm_info)
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                       "No sigfm info in image or not yet extracted!");
+          return FALSE;
+        }
+      /* The print takes ownership; the image must not keep a pointer. */
+      g_ptr_array_add (print->prints, g_steal_pointer (&image->sigfm_info));
     }
 
   g_clear_object (&print->image);
@@ -305,7 +311,8 @@ FpiMatchResult
 fpi_print_sigfm_match (FpPrint * template, FpPrint * print,
                        gint score_threshold, GError ** error)
 {
-  if (template->type != FPI_PRINT_SIGFM)
+  if (template->type != FPI_PRINT_SIGFM || print->type != FPI_PRINT_SIGFM ||
+      print->prints->len != 1)
     {
       *error = fpi_device_error_new_msg (
         FP_DEVICE_ERROR_NOT_SUPPORTED,
