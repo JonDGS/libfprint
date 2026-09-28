@@ -35,6 +35,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -60,7 +61,7 @@
 #define CMD_TIMEOUT_MS 2000
 #define STALE_WINDOW_MS 500
 #define IMAGE_TIMEOUT_MS 5000
-#define FDT_UP_TIMEOUT_MS 30000
+#define FDT_UP_TIMEOUT_MS 15000
 #define HANDSHAKE_MAX_FRAMES 64
 
 #define FLAG_CMD 0xa0
@@ -118,6 +119,7 @@ struct _FpiDeviceGoodix55a2
   gboolean      have_psk;
   guint16      *calibration;
 
+  gboolean      up_sent;       /* 0x34 sent since the last disarm */
   gboolean      armed;         /* 0x32 (and maybe 0x34) sent, no 0x60 yet */
   gboolean      wait_pending;  /* async bulk-in outstanding */
   gboolean      waiting_up;    /* the pending wait is for the up event */
@@ -225,7 +227,9 @@ goodix55a2_send_cmd (FpiDeviceGoodix55a2 *self, guint8 cmd, GError **error)
   g_autoptr(GByteArray) frame = build_frame (FLAG_CMD, body, blen);
   fp_dbg ("send cmd 0x%02x", cmd);
   if (cmd == CMD_FDT_DOWN || cmd == CMD_FDT_UP)
-    self->armed = TRUE;   /* set before the write: a failed write still gets a 0x60 */
+    self->armed = TRUE;
+  if (cmd == CMD_FDT_UP)
+    self->up_sent = TRUE;   /* both set before the write: a failed write still gets a 0x60 */
   return write_frame (self, frame, error);
 }
 
@@ -497,10 +501,12 @@ tls_new (FpiDeviceGoodix55a2 *self, GError **error)
 
 fail:
   ERR_clear_error ();
-  if (self->rbio && !self->ssl)
+  /* Only reached before SSL_set_bio, so the BIOs are still ours. */
+  if (self->rbio)
     BIO_free (self->rbio);
-  if (self->wbio && !self->ssl)
+  if (self->wbio)
     BIO_free (self->wbio);
+  self->rbio = self->wbio = NULL;
   tls_free (self);
   g_propagate_error (error, proto_error ("tls_setup_failed"));
   return FALSE;
@@ -683,6 +689,14 @@ build_image (const guint16 *calibration, const guint16 *finger)
   return img;
 }
 
+static void
+clear_calibration (FpiDeviceGoodix55a2 *self)
+{
+  if (self->calibration)
+    memset (self->calibration, 0, IMG_PIX * sizeof (guint16));
+  g_clear_pointer (&self->calibration, g_free);
+}
+
 /* ---- device sequences ---------------------------------------------------- */
 
 /* 0x60 disarm, tolerating up to two late FDT events (as the Python pilot). */
@@ -692,6 +706,7 @@ disarm (FpiDeviceGoodix55a2 *self, GError **error)
   if (!self->armed)
     return TRUE;
   self->armed = FALSE;
+  self->up_sent = FALSE;
   g_byte_array_set_size (self->rx, 0);   /* drop any partial frame */
   if (!goodix55a2_send_cmd (self, CMD_SLEEP, error))
     return FALSE;
@@ -702,7 +717,7 @@ disarm (FpiDeviceGoodix55a2 *self, GError **error)
 
       if (!read_cmd_frame (self, CMD_TIMEOUT_MS, &cmd, &body, error))
         return FALSE;
-      if ((cmd == CMD_FDT_DOWN || cmd == CMD_FDT_UP) && body->len == 24)
+      if ((cmd == CMD_FDT_DOWN || (cmd == CMD_FDT_UP && self->up_sent)) && body->len == 24)
         {
           fp_dbg ("late FDT event 0x%02x before disarm ACK", cmd);
           continue;
@@ -767,7 +782,10 @@ activate_sequence (FpiDeviceGoodix55a2 *self, GError **error)
     return FALSE;
   if (read_frame (self, CMD_TIMEOUT_MS, TRUE, &flag, &payload, &local))
     {
-      if (flag != FLAG_CMD || payload->len != 6 || payload->data[0] != CMD_ACK || payload->data[3] != CMD_NOP)
+      if (flag != FLAG_CMD || payload->len != 6 || payload->data[0] != CMD_ACK ||
+          (payload->data[1] | (payload->data[2] << 8)) != 3 ||
+          sum8 (payload->data, payload->len) != 0xaa ||
+          payload->data[3] != CMD_NOP || !(payload->data[4] & 1))
         {
           g_propagate_error (error, proto_error ("invalid_nop_ack"));
           return FALSE;
@@ -803,7 +821,7 @@ activate_sequence (FpiDeviceGoodix55a2 *self, GError **error)
   /* Experiment 0013 order: A.7, then one 2.0 with no finger = calibration. */
   if (!query_state (self, error))
     return FALSE;
-  g_clear_pointer (&self->calibration, g_free);
+  clear_calibration (self);
   self->calibration = g_new0 (guint16, IMG_PIX);
   if (!get_image (self, self->calibration, error))
     return FALSE;
@@ -826,6 +844,7 @@ arm_sequence (FpiDeviceGoodix55a2 *self, GError **error)
 }
 
 static void wait_event (FpiDeviceGoodix55a2 *self, gboolean up);
+static void handle_event_frames (FpiDeviceGoodix55a2 *self, gboolean up);
 
 static void
 finish_deactivate (FpiDeviceGoodix55a2 *self)
@@ -834,7 +853,7 @@ finish_deactivate (FpiDeviceGoodix55a2 *self)
   self->scanning = FALSE;
   self->deactivating = FALSE;
   tls_free (self);
-  g_clear_pointer (&self->calibration, g_free);
+  clear_calibration (self);
   fpi_image_device_deactivate_complete (FP_IMAGE_DEVICE (self), NULL);
 }
 
@@ -896,8 +915,6 @@ wait_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data, GError *er
 {
   FpiDeviceGoodix55a2 *self = FPI_DEVICE_GOODIX55A2 (dev);
   gboolean up = self->waiting_up;
-  guint8 flag;
-  g_autoptr(GByteArray) payload = NULL;
   GError *local = NULL;
 
   self->wait_pending = FALSE;
@@ -923,11 +940,27 @@ wait_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data, GError *er
       scan_failed (self, error);
       return;
     }
+  if (transfer->actual_length == 0)
+    {
+      wait_event (self, up);   /* empty read: keep waiting */
+      return;
+    }
   if (!append_rx (self, transfer->buffer, transfer->actual_length, &local))
     {
       scan_failed (self, local);
       return;
     }
+  handle_event_frames (self, up);
+}
+
+/* Process a complete event frame already in rx, or keep waiting. */
+static void
+handle_event_frames (FpiDeviceGoodix55a2 *self, gboolean up)
+{
+  guint8 flag;
+  g_autoptr(GByteArray) payload = NULL;
+  GError *local = NULL;
+
   if (!pop_frame (self, &flag, &payload, &local))
     {
       if (local)
@@ -938,6 +971,7 @@ wait_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data, GError *er
     }
   if (flag != FLAG_CMD || payload->len != 24 + 4 ||
       payload->data[0] != (up ? CMD_FDT_UP : CMD_FDT_DOWN) ||
+      (payload->data[1] | (payload->data[2] << 8)) != 25 ||
       sum8 (payload->data, payload->len) != 0xaa)
     {
       scan_failed (self, proto_error (up ? "unexpected_fdt_up_event" : "unexpected_fdt_down_event"));
@@ -954,8 +988,15 @@ wait_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data, GError *er
 static void
 wait_event (FpiDeviceGoodix55a2 *self, gboolean up)
 {
-  FpiUsbTransfer *t = fpi_usb_transfer_new (FP_DEVICE (self));
+  FpiUsbTransfer *t;
 
+  /* An event may already sit in rx behind the last sync ACK read. */
+  if (self->rx->len >= 4 && self->rx->len >= 4u + (self->rx->data[1] | (self->rx->data[2] << 8)))
+    {
+      handle_event_frames (self, up);
+      return;
+    }
+  t = fpi_usb_transfer_new (FP_DEVICE (self));
   self->waiting_up = up;
   self->wait_pending = TRUE;
   t->short_is_error = FALSE;
@@ -1002,7 +1043,7 @@ dev_close (FpImageDevice *img_dev)
   GError *error = NULL;
 
   tls_free (self);
-  g_clear_pointer (&self->calibration, g_free);
+  clear_calibration (self);
   g_clear_pointer (&self->rx, g_byte_array_unref);
   g_usb_device_release_interface (fpi_device_get_usb_device (FP_DEVICE (img_dev)), 0, 0, &error);
   fpi_image_device_close_complete (img_dev, error);
@@ -1020,7 +1061,7 @@ dev_activate (FpImageDevice *img_dev)
   if (!activate_sequence (self, &error))
     {
       tls_free (self);
-      g_clear_pointer (&self->calibration, g_free);
+      clear_calibration (self);
     }
   fpi_image_device_activate_complete (img_dev, error);
 }
@@ -1061,7 +1102,7 @@ fpi_device_goodix55a2_finalize (GObject *object)
   FpiDeviceGoodix55a2 *self = FPI_DEVICE_GOODIX55A2 (object);
 
   tls_free (self);
-  g_clear_pointer (&self->calibration, g_free);
+  clear_calibration (self);
   g_clear_pointer (&self->rx, g_byte_array_unref);
   g_clear_object (&self->cancel);
   G_OBJECT_CLASS (fpi_device_goodix55a2_parent_class)->finalize (object);

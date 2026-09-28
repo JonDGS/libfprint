@@ -261,6 +261,10 @@ usb:v3274p8012*
  ID_AUTOSUSPEND=1
  ID_PERSIST=0
 
+# Supported by libfprint driver goodix55a2
+usb:v27c6p55a2*
+ ID_AUTOSUSPEND=1
+
 # Supported by libfprint driver goodixtls511
 usb:v27c6p5110*
  ID_AUTOSUSPEND=1
@@ -531,7 +535,6 @@ usb:v27C6p5503*
 usb:v27C6p550A*
 usb:v27C6p550C*
 usb:v27C6p5584*
-usb:v27C6p55A2*
 usb:v27C6p55A4*
 usb:v27C6p55B4*
 usb:v27C6p5740*
