@@ -5,6 +5,7 @@ project('libfprint', [ 'c', 'cpp' ],
         'buildtype=debugoptimized',
         'warning_level=1',
         'c_std=gnu99',
+        'cpp_std=c++17',
     ],
     meson_version: '>= 0.62.0')
 
@@ -148,7 +149,7 @@ drivers_info = {
     'mafpmoc': {},
     'secugen': {},
     'goodixtls511': { 'helper': ['goodixtls'] },
-    'goodix55a2': { 'helper': ['openssl', 'pixman'] },
+    'goodix55a2': { 'helper': ['openssl'] },
 
     # SPI driver (non-optional if SPI is available)
     'elanspi': { 'spi': true, 'helper': ['udev'], 'optional': not have_spi },

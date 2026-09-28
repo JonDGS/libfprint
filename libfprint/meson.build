@@ -226,6 +226,8 @@ deps = [
     mathlib_dep,
 ] + optional_deps
 
+subdir('sigfm')
+
 # These are empty and only exist so that the include directories are created
 # in the build tree. This silences a build time warning.
 subdir('nbis/include')
@@ -249,13 +251,15 @@ libnbis = static_library('nbis',
     ]),
     install: false)
 
+priv_deps = deps + libsigfm
+
 libfprint_private = static_library('fprint-private',
     sources: [
         fpi_enums,
         libfprint_private_sources,
     ],
     dependencies: deps,
-    link_with: libnbis,
+    link_with: [libnbis, libsigfm],
     install: false)
 
 libfprint_drivers = static_library('fprint-drivers',
@@ -298,6 +302,9 @@ libfprint_dep = declare_dependency(link_with: libfprint,
 
 install_headers(['fprint.h'] + libfprint_public_headers,
     subdir: versioned_libname
+)
+install_headers(['sigfm/sigfm.h'],
+  subdir: versioned_libname + '/sigfm'
 )
 
 libfprint_private_dep = declare_dependency(

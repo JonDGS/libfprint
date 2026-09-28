@@ -324,7 +324,7 @@ fpi_device_goodixtls511_class_init (FpiDeviceGoodixTls511Class * class)
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
 
   // TODO
-  img_dev_class->bz3_threshold = 24;
+  img_dev_class->score_threshold = 24;
   img_dev_class->img_width = GOODIX511_WIDTH;
   img_dev_class->img_height = GOODIX511_HEIGHT;
 

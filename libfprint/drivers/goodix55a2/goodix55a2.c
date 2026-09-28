@@ -87,9 +87,11 @@
 #define IMG_W 176
 #define IMG_H 56
 #define IMG_PIX (IMG_W * IMG_H)
-/* NBIS finds only 1-3 minutiae at native 176x56 (0016a enroll); enlarge
- * before matching, as egis0570 and elanspi do for small sensors. */
-#define IMG_SCALE 3
+/* NBIS found only 1-7 minutiae per image at 176x56, even upscaled 3x
+ * (0016a enroll), so matching uses sigfm (SIFT keypoints) at native size.
+ * Threshold and stage count follow the sigfm MR's elan settings. */
+#define SIGFM_THRESHOLD 24
+#define ENROLL_STAGES 15
 
 /* Fixed payloads, same bytes as tools/goodix_handshake.py (0010-0014). */
 static const guint8 payload_zero2[] = { 0x00, 0x00 };
@@ -906,12 +908,7 @@ on_down_event (FpiDeviceGoodix55a2 *self)
       scan_failed (self, error);
       return;
     }
-  {
-    g_autoptr(FpImage) small = build_image (self->calibration, pixels);
-
-    img = fpi_image_resize (small, IMG_SCALE, IMG_SCALE);
-    memset (small->data, 0, IMG_PIX);
-  }
+  img = build_image (self->calibration, pixels);
   memset (pixels, 0, IMG_PIX * sizeof (guint16));
 
   fpi_image_device_report_finger_status (FP_IMAGE_DEVICE (self), TRUE);
@@ -1144,13 +1141,15 @@ fpi_device_goodix55a2_class_init (FpiDeviceGoodix55a2Class *klass)
   dev_class->type = FP_DEVICE_TYPE_USB;
   dev_class->id_table = id_table;
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
-  dev_class->nr_enroll_stages = 10;
+  dev_class->nr_enroll_stages = ENROLL_STAGES;
 
   img_class->img_open = dev_open;
   img_class->img_close = dev_close;
   img_class->activate = dev_activate;
   img_class->deactivate = dev_deactivate;
   img_class->change_state = dev_change_state;
-  img_class->img_width = IMG_W * IMG_SCALE;
-  img_class->img_height = IMG_H * IMG_SCALE;
+  img_class->img_width = IMG_W;
+  img_class->img_height = IMG_H;
+  img_class->algorithm = FPI_DEVICE_ALGO_SIGFM;
+  img_class->score_threshold = SIGFM_THRESHOLD;
 }
