@@ -704,6 +704,14 @@ build_image (const guint16 *calibration, const guint16 *finger)
   return img;
 }
 
+static void
+clear_calibration (FpiDeviceGoodix55a2 *self)
+{
+  if (self->calibration)
+    memset (self->calibration, 0, IMG_PIX * sizeof (guint16));
+  g_clear_pointer (&self->calibration, g_free);
+}
+
 /* ---- device sequences ---------------------------------------------------- */
 
 /* 0x60 disarm, tolerating up to two late FDT events (as the Python pilot). */
