@@ -140,6 +140,7 @@ driver_sources = {
     'mafpmoc' : files('drivers/mafpmoc/mafpmoc.c'),
     'secugen' : files('drivers/secugen.c'),
     'goodixtls511' : files('drivers/goodixtls/goodix511.c'),
+    'goodix55a2' : files('drivers/goodix55a2/goodix55a2.c'),
 }
 
 helper_sources = {
