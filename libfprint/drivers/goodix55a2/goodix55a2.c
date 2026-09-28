@@ -664,37 +664,44 @@ cmp_int (const void *a, const void *b)
 }
 
 /* nofinger - finger, stretched 1st-99th percentile to 0..255 (experiment
- * 0015). Ridges come out bright, so the image is flagged COLORS_INVERTED. */
+ * 0015). Ridges come out bright, so the image is flagged COLORS_INVERTED.
+ * Pixels that read 0 in either frame (808 fixed ones on this sensor) carry
+ * no signal; they are set to the median so they add no false features.
+ * Layout is the Lambertz orientation, flipud(reshape(176,56).T), which is
+ * again 176 wide and 56 high. */
 static FpImage *
 build_image (const guint16 *calibration, const guint16 *finger)
 {
   g_autofree gint *diff = g_new (gint, IMG_PIX);
   g_autofree gint *sorted = g_new (gint, IMG_PIX);
   FpImage *img = fp_image_new (IMG_W, IMG_H);
-  gint lo, hi;
+  gint lo, hi, median;
+  int n = 0;
 
   for (int i = 0; i < IMG_PIX; i++)
-    sorted[i] = diff[i] = (gint) calibration[i] - (gint) finger[i];
-  qsort (sorted, IMG_PIX, sizeof (gint), cmp_int);
-  lo = sorted[(IMG_PIX - 1) / 100];
-  hi = sorted[(IMG_PIX - 1) * 99 / 100];
+    {
+      diff[i] = (gint) calibration[i] - (gint) finger[i];
+      if (calibration[i] && finger[i])
+        sorted[n++] = diff[i];
+    }
+  if (n == 0)
+    n = 1, sorted[0] = 0;
+  qsort (sorted, n, sizeof (gint), cmp_int);
+  lo = sorted[(n - 1) / 100];
+  hi = sorted[(n - 1) * 99 / 100];
+  median = sorted[(n - 1) / 2];
   for (int i = 0; i < IMG_PIX; i++)
     {
-      gint v = hi > lo ? (diff[i] - lo) * 255 / (hi - lo) : 0;
-      img->data[i] = CLAMP (v, 0, 255);
+      gint d = (calibration[i] && finger[i]) ? diff[i] : median;
+      gint v = hi > lo ? (d - lo) * 255 / (hi - lo) : 0;
+      int r = i / IMG_H, c = i % IMG_H;          /* reshape(176, 56) */
+
+      img->data[(IMG_H - 1 - c) * IMG_W + r] = CLAMP (v, 0, 255);
     }
   img->flags = FPI_IMAGE_COLORS_INVERTED;
   memset (diff, 0, IMG_PIX * sizeof (gint));
   memset (sorted, 0, IMG_PIX * sizeof (gint));
   return img;
-}
-
-static void
-clear_calibration (FpiDeviceGoodix55a2 *self)
-{
-  if (self->calibration)
-    memset (self->calibration, 0, IMG_PIX * sizeof (guint16));
-  g_clear_pointer (&self->calibration, g_free);
 }
 
 /* ---- device sequences ---------------------------------------------------- */
