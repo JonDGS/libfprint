@@ -139,6 +139,7 @@ driver_sources = {
     'focaltech_moc' : files('drivers/focaltech_moc/focaltech_moc.c'),
     'mafpmoc' : files('drivers/mafpmoc/mafpmoc.c'),
     'secugen' : files('drivers/secugen.c'),
+    'goodixtls511' : files('drivers/goodixtls/goodix511.c'),
 }
 
 helper_sources = {
@@ -149,6 +150,12 @@ helper_sources = {
     'pixman': files(),
     'udev': files(),
     'virtual': files('drivers/virtual-device-listener.c'),
+    'goodixtls': files(
+        'drivers/goodixtls/goodix_proto.c',
+        'drivers/goodixtls/goodix.c',
+        'drivers/goodixtls/goodixtls.c',
+        'drivers/goodixtls/goodix5xx.c',
+    ),
 }
 
 drivers_sources = []

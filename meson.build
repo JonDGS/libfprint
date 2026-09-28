@@ -147,6 +147,7 @@ drivers_info = {
     'focaltech_moc': {},
     'mafpmoc': {},
     'secugen': {},
+    'goodixtls511': { 'helper': ['goodixtls'] },
 
     # SPI driver (non-optional if SPI is available)
     'elanspi': { 'spi': true, 'helper': ['udev'], 'optional': not have_spi },
@@ -243,6 +244,13 @@ foreach i : driver_helpers
         endif
 
         optional_deps += openssl_dep
+    elif i == 'goodixtls'
+        goodixtls_ssl_dep = dependency('openssl', version: '>= 3.0', required: false)
+        if not goodixtls_ssl_dep.found()
+            error('OpenSSL is required for @0@ and possibly others'.format(driver))
+        endif
+        optional_deps += goodixtls_ssl_dep
+        optional_deps += dependency('threads')
     elif i == 'udev'
         install_udev_rules = true
 
