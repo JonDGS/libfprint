@@ -251,8 +251,6 @@ libnbis = static_library('nbis',
     ]),
     install: false)
 
-priv_deps = deps + libsigfm
-
 libfprint_private = static_library('fprint-private',
     sources: [
         fpi_enums,
